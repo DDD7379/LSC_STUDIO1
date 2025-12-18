@@ -12,7 +12,7 @@ export const chatbotData: ChatMessage[] = [
     question: 'שלום! איך אני מתחיל?',
     answer: 'ברוכים הבאים ל-LSC_Studio! בואו לחלום הוא המשחק שלנו הזמין כעת. תוכלו להכנס למשחק דרך דף "המשחקים שלנו", להצטרף לדיסקורד שלנו וליהנות עם הקהילה!',
     category: 'general',
-    keywords: ['התחלה', 'ברוכים הבאים', 'אהלן']
+    keywords: ['התחלה', 'ברוכים הבאים', 'אהלן', 'שלום', 'היי']
   },
   {
     id: '2',
@@ -114,4 +114,9 @@ export const chatbotData: ChatMessage[] = [
   }
 ];
 
-export const suggestedQuestions = chatbotData.slice(0, 3).map(msg => msg.question);
+export const suggestedQuestions = [
+  'איך נכנסים למשחקים?',
+  'איך מצטרפים לדיסקורד?',
+  'איך מגישים מועמדות לצוות?',
+  'יש בעיה טכנית, מה אעשה?',
+];
