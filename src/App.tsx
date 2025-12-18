@@ -1,5 +1,6 @@
 import { RouterProvider, useRouter } from './context/RouterContext';
 import Navigation from './components/Navigation';
+import Chatbot from './components/Chatbot';
 import Home from './pages/Home';
 import About from './pages/About';
 import Games from './pages/Games';
@@ -45,6 +46,8 @@ function AppContent() {
       <main className={`flex-1 ${isAdminPage ? '' : 'pt-16 sm:pt-16'}`}>
         {renderPage()}
       </main>
+
+      {!isAdminPage && <Chatbot />}
 
       {!isAdminPage && (
 <footer className="bg-slate-950/80 backdrop-blur-sm border-t border-slate-800 py-8">
