@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { MessageCircle, X, Send, Bot, User } from 'lucide-react';
 import { chatbotData, suggestedQuestions } from '../utils/chatbotData';
 import { useRouter } from '../context/RouterContext';
+
 interface Message {
   type: 'user' | 'bot';
   text: string;
@@ -12,102 +13,203 @@ interface Message {
     page: 'home' | 'about' | 'games' | 'staff-application' | 'support' | 'links';
   };
 }
+
 interface ChatbotItem {
   keywords: string[];
   answer: string;
   navigateTo?: 'home' | 'about' | 'games' | 'staff-application' | 'support' | 'links';
   navigateLabel?: string;
+
+  // NEW: optional confirmation flow
+  confirmNavigateTo?: 'home' | 'about' | 'games' | 'staff-application' | 'support' | 'links';
+  confirmText?: string; // e.g. 'רוצה שאעביר אותך לעמוד המשחקים?'
+  confirmYesLabel?: string; // optional, if you want a button instead of typing "כן"
 }
+
+type PendingConfirm = {
+  page: NonNullable<ChatbotItem['confirmNavigateTo']>;
+  prompt: string;
+};
+
+function normalize(text: string) {
+  return text.trim().toLowerCase();
+}
+
+function isYes(text: string) {
+  const t = normalize(text);
+  return [
+    'כן',
+    'כןן',
+    'כן בבקשה',
+    'בטח',
+    'ברור',
+    'יאללה',
+    'סבבה',
+    'סבבה כן',
+    'y',
+    'yes'
+  ].includes(t);
+}
+
+function isNo(text: string) {
+  const t = normalize(text);
+  return ['לא', 'לא תודה', 'לא צריך', 'עזוב', 'עזבי', 'לא כרגע', 'n', 'no'].includes(t);
+}
+
 export default function Chatbot() {
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([{
-    type: 'bot',
-    text: 'היי! 👋 אני הבוט של LSC ואני כאן לעזור לך. מה תרצה לדעת?',
-    timestamp: new Date()
-  }]);
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      type: 'bot',
+      text: 'היי! 👋 אני הבוט של LSC ואני כאן לעזור לך. מה תרצה לדעת?',
+      timestamp: new Date()
+    }
+  ]);
   const [inputValue, setInputValue] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  // NEW: holds a confirmation intent between turns
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const {
-    navigateTo
-  } = useRouter();
+  const { navigateTo } = useRouter();
+
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({
-      behavior: 'smooth'
-    });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
+
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
-  const findAnswer = (query: string): {
-    answer: string;
-    item?: ChatbotItem;
-  } => {
+
+  const findAnswer = (query: string): { answer: string; item?: ChatbotItem } => {
     const lowerQuery = query.toLowerCase();
-    for (const item of chatbotData) {
+
+    for (const item of chatbotData as unknown as ChatbotItem[]) {
       for (const keyword of item.keywords) {
         if (lowerQuery.includes(keyword.toLowerCase())) {
-          return {
-            answer: item.answer,
-            item
-          };
+          return { answer: item.answer, item };
         }
       }
     }
+
     return {
       answer: 'לא הצלחתי למצוא תשובה לשאלה שלך 😅 נסה לשאול בצורה אחרת, או בוא לדבר איתנו בדיסקורד!'
     };
   };
+
   const handleNavigate = (page: Message['action']['page']) => {
     navigateTo(page);
     setIsOpen(false);
   };
+
+  const pushBot = (text: string, action?: Message['action']) => {
+    const botMessage: Message = {
+      type: 'bot',
+      text,
+      timestamp: new Date(),
+      action
+    };
+    setMessages((prev) => [...prev, botMessage]);
+  };
+
   const handleSendMessage = (message?: string) => {
     const textToSend = message || inputValue.trim();
     if (!textToSend) return;
+
     const userMessage: Message = {
       type: 'user',
       text: textToSend,
       timestamp: new Date()
     };
-    setMessages(prev => [...prev, userMessage]);
+
+    setMessages((prev) => [...prev, userMessage]);
     setInputValue('');
     setIsLoading(true);
+
     setTimeout(() => {
-      const {
-        answer,
-        item
-      } = findAnswer(textToSend);
-      const botMessage: Message = {
-        type: 'bot',
-        text: answer,
-        timestamp: new Date(),
-        action: item?.navigateTo ? {
-          type: 'navigate',
-          label: item.navigateLabel || 'לחץ כאן',
-          page: item.navigateTo
-        } : undefined
-      };
-      setMessages(prev => [...prev, botMessage]);
+      // 1) If we are waiting for confirmation, handle it first
+      if (pendingConfirm) {
+        if (isYes(textToSend)) {
+          pushBot('מעביר אותך עכשיו.');
+          handleNavigate(pendingConfirm.page);
+          setPendingConfirm(null);
+          setIsLoading(false);
+          return;
+        }
+
+        if (isNo(textToSend)) {
+          pushBot('סבבה. אם תרצה אחר כך, תגיד לי "עמוד המשחקים" או תלחץ על הכפתור אם יופיע.');
+          setPendingConfirm(null);
+          setIsLoading(false);
+          return;
+        }
+
+        // Not a yes/no → keep waiting but help the user
+        pushBot('רק כדי לוודא: כן או לא?');
+        setIsLoading(false);
+        return;
+      }
+
+      // 2) Normal intent match
+      const { answer, item } = findAnswer(textToSend);
+
+      // Existing direct navigation button flow (optional)
+      const directAction = item?.navigateTo
+        ? {
+            type: 'navigate' as const,
+            label: item.navigateLabel || 'לחץ כאן',
+            page: item.navigateTo
+          }
+        : undefined;
+
+      pushBot(answer, directAction);
+
+      // 3) NEW: optional confirm-to-navigate flow
+      if (item?.confirmNavigateTo) {
+        const prompt = item.confirmText || 'רוצה שאעביר אותך לעמוד הזה?';
+        setPendingConfirm({ page: item.confirmNavigateTo, prompt });
+
+        // Option A: user types yes/no
+        pushBot(prompt);
+
+        // Option B: also show a button to confirm (optional)
+        if (item.confirmYesLabel) {
+          pushBot('אפשר גם פשוט ללחוץ כאן.', {
+            type: 'navigate',
+            label: item.confirmYesLabel,
+            page: item.confirmNavigateTo
+          });
+          // If you keep the button, you may want to clear pendingConfirm when clicked.
+          // Easiest: inside handleNavigate add: setPendingConfirm(null)
+        }
+      }
+
       setIsLoading(false);
     }, 600);
   };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !isLoading) {
       handleSendMessage();
     }
   };
-  return <>
-      {/* Floating Button */}
-      {!isOpen && <button onClick={() => setIsOpen(true)} className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white rounded-full shadow-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 group" title="פתח צאטבוט">
+
+  return (
+    <>
+      {!isOpen && (
+        <button
+          onClick={() => setIsOpen(true)}
+          className="fixed bottom-4 right-4 sm:bottom-6 sm:right-6 z-50 w-14 h-14 sm:w-16 sm:h-16 bg-gradient-to-br from-blue-500 to-blue-700 hover:from-blue-600 hover:to-blue-800 text-white rounded-full shadow-xl flex items-center justify-center transition-all duration-300 hover:scale-110 active:scale-95 group"
+          title="פתח צאטבוט"
+        >
           <MessageCircle className="w-6 h-6 sm:w-7 sm:h-7 group-hover:scale-110 transition-transform" />
           <span className="absolute -top-1 -right-1 w-4 h-4 bg-green-500 rounded-full border-2 border-slate-900 animate-pulse" />
-        </button>}
+        </button>
+      )}
 
-      {/* Chat Window */}
-      {isOpen && <div className="fixed inset-0 sm:inset-auto sm:bottom-4 sm:right-4 md:bottom-6 md:right-6 z-50 sm:w-[380px] sm:h-[550px] md:w-[420px] md:h-[600px] bg-slate-900/95 sm:rounded-2xl shadow-2xl border-0 sm:border sm:border-slate-700/50 flex flex-col overflow-hidden backdrop-blur-xl">
-          
-          {/* Header */}
+      {isOpen && (
+        <div className="fixed inset-0 sm:inset-auto sm:bottom-4 sm:right-4 md:bottom-6 md:right-6 z-50 sm:w-[380px] sm:h-[550px] md:w-[420px] md:h-[600px] bg-slate-900/95 sm:rounded-2xl shadow-2xl border-0 sm:border sm:border-slate-700/50 flex flex-col overflow-hidden backdrop-blur-xl">
           <div className="bg-gradient-to-r from-blue-600 via-blue-500 to-indigo-600 p-4 sm:p-5 flex items-center justify-between relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-br from-white/5 to-transparent" />
             <div className="flex items-center gap-3 relative z-10">
@@ -116,7 +218,7 @@ export default function Chatbot() {
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <h3 className="text-white font-bold text-base sm:text-lg">​בוט</h3>
+                  <h3 className="text-white font-bold text-base sm:text-lg">בוט</h3>
                   <User className="w-4 h-4 bg-primary text-white" />
                 </div>
                 <p className="text-blue-100 text-xs sm:text-sm flex items-center gap-1">
@@ -125,63 +227,129 @@ export default function Chatbot() {
                 </p>
               </div>
             </div>
-            <button onClick={() => setIsOpen(false)} className="relative z-10 text-white/80 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all duration-200" title="סגור">
+            <button
+              onClick={() => setIsOpen(false)}
+              className="relative z-10 text-white/80 hover:text-white hover:bg-white/20 p-2 rounded-xl transition-all duration-200"
+              title="סגור"
+            >
               <X className="w-5 h-5 sm:w-6 sm:h-6" />
             </button>
           </div>
 
-          {/* Messages */}
           <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-3 sm:space-y-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
-            {messages.map((msg, idx) => <div key={idx} className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+            {messages.map((msg, idx) => (
+              <div key={idx} className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div className="flex flex-col gap-1 max-w-[85%] sm:max-w-[80%]">
-                  <div className={`px-4 py-3 rounded-2xl text-sm sm:text-base leading-relaxed ${msg.type === 'user' ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md shadow-lg shadow-blue-500/20' : 'bg-slate-800/80 text-gray-100 rounded-bl-md border border-slate-700/50'}`}>
+                  <div
+                    className={`px-4 py-3 rounded-2xl text-sm sm:text-base leading-relaxed ${
+                      msg.type === 'user'
+                        ? 'bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-br-md shadow-lg shadow-blue-500/20'
+                        : 'bg-slate-800/80 text-gray-100 rounded-bl-md border border-slate-700/50'
+                    }`}
+                  >
                     {msg.text}
                   </div>
-                  
-                  {/* Navigation Action Button */}
-                  {msg.action && <button onClick={() => handleNavigate(msg.action!.page)} className="self-start mt-1 px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white text-sm rounded-xl transition-all duration-200 shadow-lg shadow-green-500/20 hover:scale-105 active:scale-95">
-                      {msg.action.label}
-                    </button>}
-                </div>
-              </div>)}
 
-            {/* Loading Animation */}
-            {isLoading && <div className="flex justify-start">
+                  {msg.action && (
+                    <button
+                      onClick={() => {
+                        // if this is a confirm button, also clear pending
+                        setPendingConfirm(null);
+                        handleNavigate(msg.action!.page);
+                      }}
+                      className="self-start mt-1 px-4 py-2 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white text-sm rounded-xl transition-all duration-200 shadow-lg shadow-green-500/20 hover:scale-105 active:scale-95"
+                    >
+                      {msg.action.label}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ))}
+
+            {isLoading && (
+              <div className="flex justify-start">
                 <div className="bg-slate-800/80 text-gray-200 px-4 py-3 rounded-2xl rounded-bl-md border border-slate-700/50">
                   <div className="flex gap-1.5">
                     <div className="w-2.5 h-2.5 bg-blue-400 rounded-full animate-bounce" />
-                    <div className="w-2.5 h-2.5 bg-blue-400 rounded-full animate-bounce" style={{
-                animationDelay: '0.15s'
-              }} />
-                    <div className="w-2.5 h-2.5 bg-blue-400 rounded-full animate-bounce" style={{
-                animationDelay: '0.3s'
-              }} />
+                    <div
+                      className="w-2.5 h-2.5 bg-blue-400 rounded-full animate-bounce"
+                      style={{ animationDelay: '0.15s' }}
+                    />
+                    <div
+                      className="w-2.5 h-2.5 bg-blue-400 rounded-full animate-bounce"
+                      style={{ animationDelay: '0.3s' }}
+                    />
                   </div>
                 </div>
-              </div>}
+              </div>
+            )}
 
-            {/* Suggested Questions */}
-            {messages.length === 1 && <div className="space-y-3 pt-2">
+            {messages.length === 1 && (
+              <div className="space-y-3 pt-2">
                 <p className="text-gray-400 text-xs sm:text-sm text-center">שאלות נפוצות:</p>
                 <div className="grid grid-cols-1 gap-2">
-                  {suggestedQuestions.map((question, idx) => <button key={idx} onClick={() => handleSendMessage(question)} className="w-full px-4 py-3 bg-slate-800/60 hover:bg-slate-700/80 border border-slate-700/50 hover:border-blue-500/50 rounded-xl text-gray-200 text-sm transition-all duration-200 text-right hover:scale-[1.02] active:scale-[0.98]">
+                  {suggestedQuestions.map((question, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => handleSendMessage(question)}
+                      className="w-full px-4 py-3 bg-slate-800/60 hover:bg-slate-700/80 border border-slate-700/50 hover:border-blue-500/50 rounded-xl text-gray-200 text-sm transition-all duration-200 text-right hover:scale-[1.02] active:scale-[0.98]"
+                    >
                       {question}
-                    </button>)}
+                    </button>
+                  ))}
                 </div>
-              </div>}
+              </div>
+            )}
 
             <div ref={messagesEndRef} />
           </div>
 
-          {/* Input Area */}
           <div className="border-t border-slate-700/50 p-3 sm:p-4 bg-slate-900/80 backdrop-blur-sm">
             <div className="flex gap-2 sm:gap-3">
-              <input type="text" value={inputValue} onChange={e => setInputValue(e.target.value)} onKeyDown={handleKeyDown} placeholder="שאל אותי משהו..." className="flex-1 bg-slate-800/80 text-white px-4 py-3 rounded-xl text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-blue-500/50 border border-slate-700/50 placeholder-gray-500 transition-all duration-200" disabled={isLoading} />
-              <button onClick={() => handleSendMessage()} disabled={isLoading || !inputValue.trim()} className="bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 disabled:from-slate-600 disabled:to-slate-700 disabled:cursor-not-allowed text-white p-3 rounded-xl transition-all duration-200 shadow-lg shadow-blue-500/20 hover:scale-105 active:scale-95 disabled:shadow-none disabled:hover:scale-100" title="שלח">
+              <input
+                type="text"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="שאל אותי משהו..."
+                className="flex-1 bg-slate-800/80 text-white px-4 py-3 rounded-xl text-sm sm:text-base focus:outline-none focus:ring-2 focus:ring-blue-500/50 border border-slate-700/50 placeholder-gray-500 transition-all duration-200"
+                disabled={isLoading}
+              />
+              <button
+                onClick={() => handleSendMessage()}
+                disabled={isLoading || !inputValue.trim()}
+                className="bg-gradient-to-br from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 disabled:from-slate-600 disabled:to-slate-700 disabled:cursor-not-allowed text-white p-3 rounded-xl transition-all duration-200 shadow-lg shadow-blue-500/20 hover:scale-105 active:scale-95 disabled:shadow-none disabled:hover:scale-100"
+                title="שלח"
+              >
                 <Send className="w-5 h-5" />
               </button>
             </div>
           </div>
-        </div>}
-    </>;
+        </div>
+      )}
+    </>
+  );
 }
+
+/*
+HOW TO USE (in your chatbotData items):
+
+1) Direct button navigation (existing):
+{
+  keywords: ['דיסקורד'],
+  answer: '... ',
+  navigateTo: 'links',
+  navigateLabel: 'לדף הקישורים'
+}
+
+2) Confirm-to-navigate (new):
+{
+  keywords: ['משחקים', 'בואו לחלום'],
+  answer: 'כרגע זמין המשחק... ',
+  confirmNavigateTo: 'games',
+  confirmText: 'רוצה שאעביר אותך לעמוד המשחקים?',
+  confirmYesLabel: 'כן, להעביר אותי' // optional
+}
+
+If you include confirmYesLabel, user can click. If not, user can type כן/לא.
+*/
