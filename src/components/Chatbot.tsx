@@ -162,7 +162,7 @@ export default function Chatbot() {
 
             {/* Suggested Questions */}
             {messages.length === 1 && <div className="space-y-3 pt-2">
-                <p className="text-gray-400 text-xs sm:text-sm text-center">💡 שאלות פופולריות:</p>
+                <p className="text-gray-400 text-xs sm:text-sm text-center">שאלות נפוצות:</p>
                 <div className="grid grid-cols-1 gap-2">
                   {suggestedQuestions.map((question, idx) => <button key={idx} onClick={() => handleSendMessage(question)} className="w-full px-4 py-3 bg-slate-800/60 hover:bg-slate-700/80 border border-slate-700/50 hover:border-blue-500/50 rounded-xl text-gray-200 text-sm transition-all duration-200 text-right hover:scale-[1.02] active:scale-[0.98]">
                       {question}
