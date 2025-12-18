@@ -1,0 +1,1 @@
+LSC_STUDIO1
